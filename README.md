@@ -16,15 +16,18 @@ User Level Permissions
 Object Level Permissions
 
 How to install? 
+
 Easy copy and paste the script into a per SQL Instance basis or via Central Management Servers to install on multiple. Hit f5 or Execute and its done. 
 If you do not want or have a DBA DB then open the code within notepad for example and search and replace all DBA to what ever you like. 
 
 What will be installed? 
+
 Tables for storage of different permissions in the DB of your choice, 
 SQL Server Agent Job for automated daily runs, 
 Stored procedure to run the Script to report from. 
 
 How to use it? 
+
 The below will return all permissions across all DBs, All History. Quite a lot of information will be returned. 
 ```
 USE [DBA]
