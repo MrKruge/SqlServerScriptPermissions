@@ -1,13 +1,59 @@
 -- Deployment of Scripting out permissions. this will create the SQL Agent job plus SQL tables and SQL PROC. 
-
-USE [msdb]
+USE DBA
 GO
+-- First Clean up 
+IF EXISTS (SELECT job_id FROM msdb.dbo.sysjobs WHERE name = N'DBA - ScriptOutPermissions')
+BEGIN
+    EXEC msdb.dbo.sp_delete_job @job_name = N'DBA - ScriptOutPermissions';
+END
 
-/****** Object:  Job [DBA - ScriptOutPermissions]    Script Date: 9/7/2021 3:34:39 PM ******/
+
+IF OBJECT_ID(N'tbl_DBA_Object_level_permissions', N'U') IS NOT NULL
+BEGIN
+    DROP TABLE tbl_DBA_Object_level_permissions;
+END
+
+IF OBJECT_ID(N'tbl_DBA_role_level_permissions', N'U') IS NOT NULL
+BEGIN
+    DROP TABLE tbl_DBA_role_level_permissions;
+END
+
+IF OBJECT_ID(N'tbl_DBA_Server_level_permissions', N'U') IS NOT NULL
+BEGIN
+    DROP TABLE tbl_DBA_Server_level_permissions;
+END
+
+IF OBJECT_ID(N'tbl_DBA_server_roles', N'U') IS NOT NULL
+BEGIN
+    DROP TABLE tbl_DBA_server_roles;
+END
+
+IF OBJECT_ID(N'tbl_DBA_User_level_permissions', N'U') IS NOT NULL
+BEGIN
+    DROP TABLE tbl_DBA_User_level_permissions;
+END
+
+IF OBJECT_ID(N'tbl_DBA_Users_per_db', N'U') IS NOT NULL
+BEGIN
+    DROP TABLE tbl_DBA_Users_per_db;
+END
+
+IF OBJECT_ID(N'tbl_DBA_logins', N'U') IS NOT NULL
+BEGIN
+    DROP TABLE tbl_DBA_logins;
+END
+
+IF OBJECT_ID(N'sp_DBA_Script_All_Permissions', N'P') IS NOT NULL
+BEGIN
+    DROP PROCEDURE sp_DBA_Script_All_Permissions;
+END
+
+USE MSDB
+/****** Object:  Job [DBA - ScriptOutPermissions]    Script Date: 2/17/2025 21:02:10 ******/
 BEGIN TRANSACTION
 DECLARE @ReturnCode INT
 SELECT @ReturnCode = 0
-/****** Object:  JobCategory [[Uncategorized (Local)]]    Script Date: 9/7/2021 3:34:39 PM ******/
+/****** Object:  JobCategory [[Uncategorized (Local)]]    Script Date: 2/17/2025 21:02:10 ******/
 IF NOT EXISTS (SELECT name FROM msdb.dbo.syscategories WHERE name=N'[Uncategorized (Local)]' AND category_class=1)
 BEGIN
 EXEC @ReturnCode = msdb.dbo.sp_add_category @class=N'JOB', @type=N'LOCAL', @name=N'[Uncategorized (Local)]'
@@ -27,7 +73,7 @@ EXEC @ReturnCode =  msdb.dbo.sp_add_job @job_name=N'DBA - ScriptOutPermissions',
 		@category_name=N'[Uncategorized (Local)]', 
 		@owner_login_name=N'sa', @job_id = @jobId OUTPUT
 IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
-/****** Object:  Step [ScriptOutAllPermissions]    Script Date: 9/7/2021 3:34:39 PM ******/
+/****** Object:  Step [ScriptOutAllPermissions]    Script Date: 2/17/2025 21:02:11 ******/
 EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'ScriptOutAllPermissions', 
 		@step_id=1, 
 		@cmdexec_success_code=0, 
@@ -38,244 +84,7 @@ EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'ScriptOu
 		@retry_attempts=0, 
 		@retry_interval=0, 
 		@os_run_priority=0, @subsystem=N'TSQL', 
-		@command=N'
-/********************************************************************************************************************/
--- Scripting Out the Logins, Server Role Assignments, and Server Permissions
-/********************************************************************************************************************/
-SET NOCOUNT ON
--- Scripting Out the Logins To Be Created
-USE DBA 
--- Creating Table is not exists
-IF  NOT EXISTS (SELECT * FROM sys.objects 
-WHERE object_id = OBJECT_ID(N''DBA.dbo.tbl_DBA_logins'') AND type in (N''U''))
-BEGIN
-CREATE TABLE DBA.dbo.tbl_DBA_logins(
-DATE Datetime,
-Logins_to_be_created NVARCHAR(MAX)
-) 
-END
-
-INSERT INTO  DBA.dbo.tbl_DBA_logins
-SELECT GETDATE() AS DATE,''IF (SUSER_ID(''+QUOTENAME(SP.name,'''''''')+'') IS NULL) BEGIN CREATE LOGIN '' +QUOTENAME(SP.name)+
-			   CASE 
-					WHEN SP.type_desc = ''SQL_LOGIN'' THEN '' WITH PASSWORD = '' +CONVERT(NVARCHAR(MAX),SL.password_hash,1)+ '' HASHED, CHECK_EXPIRATION = '' 
-						+ CASE WHEN SL.is_expiration_checked = 1 THEN ''ON'' ELSE ''OFF'' END +'', CHECK_POLICY = '' +CASE WHEN SL.is_policy_checked = 1 THEN ''ON,'' ELSE ''OFF,'' END
-					ELSE '' FROM WINDOWS WITH''
-				END 
-	   +'' DEFAULT_DATABASE=['' +SP.default_database_name+ ''], DEFAULT_LANGUAGE=['' +SP.default_language_name+ ''] END;'' COLLATE SQL_Latin1_General_CP1_CI_AS AS [-- Logins To Be Created --]
-FROM sys.server_principals AS SP LEFT JOIN sys.sql_logins AS SL
-		ON SP.principal_id = SL.principal_id
-WHERE SP.type IN (''S'',''G'',''U'')
-		AND SP.name NOT LIKE ''##%##''
-		AND SP.name NOT LIKE ''NT AUTHORITY%''
-		AND SP.name NOT LIKE ''NT SERVICE%''
-		AND SP.name <> (''sa'')
-
-		-- Creating Table is not exists
-IF  NOT EXISTS (SELECT * FROM sys.objects 
-WHERE object_id = OBJECT_ID(N''DBA.dbo.tbl_DBA_Server_roles'') AND type in (N''U''))
-
-BEGIN
-CREATE TABLE DBA.dbo.tbl_DBA_server_roles(
-DATE Datetime,
-server_roles Nvarchar(max)
-)
-END
-
-
--- Scripting Out the Role Membership to Be Added
-INSERT INTO DBA.dbo.tbl_DBA_server_roles
-SELECT GETDATE() AS DATE,
-''EXEC master..sp_addsrvrolemember @loginame = N'''''' + SL.name + '''''', @rolename = N'''''' + SR.name + ''''''
-'' AS [-- Server Roles the Logins Need to be Added --]
-FROM master.sys.server_role_members SRM
-	JOIN master.sys.server_principals SR ON SR.principal_id = SRM.role_principal_id
-	JOIN master.sys.server_principals SL ON SL.principal_id = SRM.member_principal_id
-WHERE SL.type IN (''S'',''G'',''U'')
-		AND SL.name NOT LIKE ''##%##''
-		AND SL.name NOT LIKE ''NT AUTHORITY%''
-		AND SL.name NOT LIKE ''NT SERVICE%''
-		AND SL.name <> (''sa'')
-
-
--- Creating Table is not exists
-IF  NOT EXISTS (SELECT * FROM sys.objects 
-WHERE object_id = OBJECT_ID(N''DBA.dbo.tbl_DBA_Server_level_permissions'') AND type in (N''U''))
-
-BEGIN
-CREATE TABLE DBA.dbo.tbl_DBA_Server_level_permissions(
-DATE Datetime,
-Server_level_Permissions NVARCHAR(MAX)
-) 
-END
-
-INSERT INTO  DBA.dbo.tbl_DBA_Server_level_permissions
-SELECT GETDATE() AS DATE,
-	CASE WHEN SrvPerm.state_desc <> ''GRANT_WITH_GRANT_OPTION'' 
-		THEN SrvPerm.state_desc 
-		ELSE ''GRANT'' 
-	END
-    + '' '' + SrvPerm.permission_name + '' TO ['' + SP.name + '']'' + 
-	CASE WHEN SrvPerm.state_desc <> ''GRANT_WITH_GRANT_OPTION'' 
-		THEN '''' 
-		ELSE '' WITH GRANT OPTION'' 
-	END collate database_default AS [-- Server Level Permissions to Be Granted --] 
-FROM sys.server_permissions AS SrvPerm 
-	JOIN sys.server_principals AS SP ON SrvPerm.grantee_principal_id = SP.principal_id 
-WHERE   SP.type IN ( ''S'', ''U'', ''G'' ) 
-		AND SP.name NOT LIKE ''##%##''
-		AND SP.name NOT LIKE ''NT AUTHORITY%''
-		AND SP.name NOT LIKE ''NT SERVICE%''
-		AND SP.name <> (''sa'')
-
-		
-/********************************************************************************************************************/
--- Scripting Out the user permissions for all DB 
-/********************************************************************************************************************/
--- Creating Table is not exists
-IF  NOT EXISTS (SELECT * FROM sys.objects 
-WHERE object_id = OBJECT_ID(N''DBA.dbo.tbl_DBA_User_level_permissions'') AND type in (N''U''))
-
-BEGIN
-CREATE TABLE DBA.dbo.tbl_DBA_User_level_permissions(
-DATE Datetime,
-DBName NVarchar(max),
-User_level_Permissions NVARCHAR(MAX)
-) 
-END
-
-IF  NOT EXISTS (SELECT * FROM sys.objects 
-WHERE object_id = OBJECT_ID(N''DBA.dbo.tbl_DBA_role_level_permissions'') AND type in (N''U''))
-
-BEGIN
-CREATE TABLE DBA.dbo.tbl_DBA_role_level_permissions(
-DATE Datetime,
-DBName NVarchar(max),
-role_level_Permissions NVARCHAR(MAX)
-) 
-END
-
-IF  NOT EXISTS (SELECT * FROM sys.objects 
-WHERE object_id = OBJECT_ID(N''DBA.dbo.tbl_DBA_Users_per_db'') AND type in (N''U''))
-
-BEGIN
-CREATE TABLE DBA.dbo.tbl_DBA_Users_per_db(
-DATE Datetime,
-DBName NVarchar(max),
-User_per_db NVARCHAR(MAX)
-) 
-END
-
-IF  NOT EXISTS (SELECT * FROM sys.objects 
-WHERE object_id = OBJECT_ID(N''DBA.dbo.tbl_DBA_Object_level_permissions'') AND type in (N''U''))
-
-BEGIN
-CREATE TABLE DBA.dbo.tbl_DBA_Object_level_permissions(
-DATE Datetime,
-DBName NVarchar(max),
-Object_level_permission NVARCHAR(MAX)
-) 
-END
-
-
-
-PRINT ''--Scripting out the User Permissions to Be Granted''
-
-DECLARE @command NVARCHAR(MAX) 
-SELECT @command =
-
-
- 
-''USE [?] 
-
-DECLARE @dbname VARCHAR(250) 
-SELECT @dbname = DB_NAME() 
-
-PRINT ''''use '''' + @dbname
-
-insert into DBA.dbo.tbl_DBA_Users_per_db
-SELECT GETDATE() AS DATE,
-DB_NAME(),
-''''CREATE USER '''' + ''''['''' + NAME + '''']'''' + '''' FOR LOGIN '''' + ''''['''' + NAME + '''']''''
-FROM sys.database_principals
-WHERE	[NAME] NOT IN (''''dbo'''',''''guest'''',''''sys'''',''''INFORMATION_SCHEMA'''')
-
-
-PRINT ''''use '''' + @dbname
-
-insert into  DBA.dbo.tbl_DBA_role_level_permissions
-SELECT GETDATE() AS DATE,  
-DB_NAME(),
-''''EXEC sp_AddRoleMember '''' + ''''['''' + DBRole.NAME + '''']'''' + '''','''' + ''''['''' + DBP.NAME + '''']''''
-FROM sys.database_principals DBP
-INNER JOIN sys.database_role_members DBM ON DBM.member_principal_id = DBP.principal_id
-INNER JOIN sys.database_principals DBRole ON DBRole.principal_id = DBM.role_principal_id
-WHERE DBP.NAME <> ''''dbo''''
-
-
-PRINT ''''use '''' + @dbname
- 
-insert into  DBA.dbo.tbl_DBA_User_level_permissions
-SELECT  	GETDATE() AS DATE,
-		DB_NAME(),
-		CASE WHEN DBP.state <> ''''W'''' THEN DBP.state_desc ELSE ''''GRANT'''' END
-		+ SPACE(1) + DBP.permission_name + SPACE(1)
-		+ SPACE(1) + ''''TO'''' + SPACE(1) + QUOTENAME(USR.name) COLLATE database_default
-		+ CASE WHEN DBP.state <> ''''W'''' THEN SPACE(0) ELSE SPACE(1) + ''''WITH GRANT OPTION'''' END + '''';'''' 
-FROM	sys.database_permissions AS DBP
-		INNER JOIN	sys.database_principals AS USR	ON DBP.grantee_principal_id = USR.principal_id
-WHERE	DBP.major_id = 0 and USR.name <> ''''dbo''''
-ORDER BY DBP.permission_name ASC, DBP.state_desc ASC
-''
-
- EXEC sp_MSforeachdb @command
-
-
- PRINT ''--Scripting out the object Permissions to Be Granted (In its own quey due to syntax errors''
-
-DECLARE @command1 NVARCHAR(MAX) 
-SELECT @command1 =
-
-
-
- ''USE [?] 
-
-DECLARE @dbname VARCHAR(250) 
-SELECT @dbname = DB_NAME() 
-
-insert into  DBA.dbo.tbl_DBA_object_level_permissions 
- SELECT  
- GETDATE() AS DATE,
-		DB_NAME(),  
-		CASE 
-            WHEN sys.database_permissions.state <> ''''W'''' THEN sys.database_permissions.state_desc 
-            ELSE ''''GRANT''''
-        END
-        + SPACE(1) + sys.database_permissions.permission_name + SPACE(1) + ''''ON '''' + QUOTENAME(SCHEMA_NAME(objects.schema_id)) + ''''.'''' + QUOTENAME(objects.name) --select, execute, etc on specific objects
-        + CASE
-                WHEN sys.columns.column_id IS NULL THEN SPACE(0)
-                ELSE ''''('''' + QUOTENAME(sys.columns.name) + '''')''''
-          END
-        + SPACE(1) + ''''TO'''' + SPACE(1) + QUOTENAME(USER_NAME(sys.database_principals.principal_id)) COLLATE database_default
-        + CASE 
-                WHEN sys.database_permissions.state <> ''''W'''' THEN SPACE(0)
-                ELSE SPACE(1) + ''''WITH GRANT OPTION''''
-          END
-FROM    
-    sys.database_permissions
-        INNER JOIN
-    sys.objects 
-            ON sys.database_permissions.major_id = objects.[object_id]
-        INNER JOIN
-    sys.database_principals
-            ON sys.database_permissions.grantee_principal_id = sys.database_principals.principal_id
-        LEFT JOIN
-    sys.columns
-            ON sys.columns.column_id = sys.database_permissions.minor_id AND sys.columns.[object_id] = sys.database_permissions.major_id''
- 
-  EXEC sp_MSforeachdb @command1
-SET NOCOUNT OFF;
-', 
+		@command=N'exec [sp_DBA_Get_All_Permissions]', 
 		@database_name=N'DBA', 
 		@output_file_name=N'E:\SQLDATA\BACKUP\All_SQL_Permissions.sql', 
 		@flags=0
@@ -304,6 +113,9 @@ QuitWithRollback:
     IF (@@TRANCOUNT > 0) ROLLBACK TRANSACTION
 EndSave:
 GO
+
+
+
 
 --Create all Tables
 
@@ -525,6 +337,268 @@ SELECT [DATE]
   WHERE date > @daysminus
   AND DBName = @Dbname
 END
+GO
+
+-- new addition get all permissions via SQL Sproc so Agent just triggers this stored procedure 
+
+IF OBJECT_ID(N'[dbo].[sp_DBA_Get_All_Permissions]', N'P') IS NOT NULL
+BEGIN
+    DROP PROCEDURE [dbo].[sp_DBA_Get_All_Permissions]
+END
+GO
+
+/****** Object:  StoredProcedure [dbo].[sp_DBA_Get_All_Permissions]    Script Date: 2/17/2025 21:01:56 ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+-- =============================================
+-- Author:		Danny Kruge
+-- Create date: 17/02/2025
+-- Description:	New version to help with Azure SQL run
+-- =============================================
+CREATE PROCEDURE [dbo].[sp_DBA_Get_All_Permissions]
+
+as 
+/********************************************************************************************************************/
+-- Scripting Out the Logins, Server Role Assignments, and Server Permissions
+/********************************************************************************************************************/
+SET NOCOUNT ON
+-- Scripting Out the Logins To Be Created
+
+-- Creating Table is not exists
+IF  NOT EXISTS (SELECT * FROM sys.objects 
+WHERE object_id = OBJECT_ID(N'DBA.dbo.tbl_DBA_logins') AND type in (N'U'))
+BEGIN
+CREATE TABLE DBA.dbo.tbl_DBA_logins(
+DATE Datetime,
+Logins_to_be_created NVARCHAR(MAX)
+) 
+END
+
+INSERT INTO  DBA.dbo.tbl_DBA_logins
+SELECT GETDATE() AS DATE,'IF (SUSER_ID('+QUOTENAME(SP.name,'''')+') IS NULL) BEGIN CREATE LOGIN ' +QUOTENAME(SP.name)+
+			   CASE 
+					WHEN SP.type_desc = 'SQL_LOGIN' THEN ' WITH PASSWORD = ' +CONVERT(NVARCHAR(MAX),SL.password_hash,1)+ ' HASHED, CHECK_EXPIRATION = ' 
+						+ CASE WHEN SL.is_expiration_checked = 1 THEN 'ON' ELSE 'OFF' END +', CHECK_POLICY = ' +CASE WHEN SL.is_policy_checked = 1 THEN 'ON,' ELSE 'OFF,' END
+					ELSE ' FROM WINDOWS WITH'
+				END 
+	   +' DEFAULT_DATABASE=[' +SP.default_database_name+ '], DEFAULT_LANGUAGE=[' +SP.default_language_name+ '] END;' COLLATE SQL_Latin1_General_CP1_CI_AS AS [-- Logins To Be Created --]
+FROM sys.server_principals AS SP LEFT JOIN sys.sql_logins AS SL
+		ON SP.principal_id = SL.principal_id
+WHERE SP.type IN ('S','G','U')
+		AND SP.name NOT LIKE '##%##'
+		AND SP.name NOT LIKE 'NT AUTHORITY%'
+		AND SP.name NOT LIKE 'NT SERVICE%'
+		AND SP.name <> ('sa')
+
+		-- Creating Table is not exists
+IF  NOT EXISTS (SELECT * FROM sys.objects 
+WHERE object_id = OBJECT_ID(N'DBA.dbo.tbl_DBA_Server_roles') AND type in (N'U'))
+
+BEGIN
+CREATE TABLE DBA.dbo.tbl_DBA_server_roles(
+DATE Datetime,
+server_roles Nvarchar(max)
+)
+END
+
+
+-- Scripting Out the Role Membership to Be Added
+INSERT INTO DBA.dbo.tbl_DBA_server_roles
+SELECT GETDATE() AS DATE,
+'EXEC master..sp_addsrvrolemember @loginame = N''' + SL.name + ''', @rolename = N''' + SR.name + '''
+' AS [-- Server Roles the Logins Need to be Added --]
+FROM master.sys.server_role_members SRM
+	JOIN master.sys.server_principals SR ON SR.principal_id = SRM.role_principal_id
+	JOIN master.sys.server_principals SL ON SL.principal_id = SRM.member_principal_id
+WHERE SL.type IN ('S','G','U')
+		AND SL.name NOT LIKE '##%##'
+		AND SL.name NOT LIKE 'NT AUTHORITY%'
+		AND SL.name NOT LIKE 'NT SERVICE%'
+		AND SL.name <> ('sa')
+
+
+-- Creating Table is not exists
+IF  NOT EXISTS (SELECT * FROM sys.objects 
+WHERE object_id = OBJECT_ID(N'DBA.dbo.tbl_DBA_Server_level_permissions') AND type in (N'U'))
+
+BEGIN
+CREATE TABLE DBA.dbo.tbl_DBA_Server_level_permissions(
+DATE Datetime,
+Server_level_Permissions NVARCHAR(MAX)
+) 
+END
+
+INSERT INTO  DBA.dbo.tbl_DBA_Server_level_permissions
+SELECT GETDATE() AS DATE,
+	CASE WHEN SrvPerm.state_desc <> 'GRANT_WITH_GRANT_OPTION' 
+		THEN SrvPerm.state_desc 
+		ELSE 'GRANT' 
+	END
+    + ' ' + SrvPerm.permission_name + ' TO [' + SP.name + ']' + 
+	CASE WHEN SrvPerm.state_desc <> 'GRANT_WITH_GRANT_OPTION' 
+		THEN '' 
+		ELSE ' WITH GRANT OPTION' 
+	END collate database_default AS [-- Server Level Permissions to Be Granted --] 
+FROM sys.server_permissions AS SrvPerm 
+	JOIN sys.server_principals AS SP ON SrvPerm.grantee_principal_id = SP.principal_id 
+WHERE   SP.type IN ( 'S', 'U', 'G' ) 
+		AND SP.name NOT LIKE '##%##'
+		AND SP.name NOT LIKE 'NT AUTHORITY%'
+		AND SP.name NOT LIKE 'NT SERVICE%'
+		AND SP.name <> ('sa')
+
+		
+/********************************************************************************************************************/
+-- Scripting Out the user permissions for all DB 
+/********************************************************************************************************************/
+-- Creating Table is not exists
+IF  NOT EXISTS (SELECT * FROM sys.objects 
+WHERE object_id = OBJECT_ID(N'DBA.dbo.tbl_DBA_User_level_permissions') AND type in (N'U'))
+
+BEGIN
+CREATE TABLE DBA.dbo.tbl_DBA_User_level_permissions(
+DATE Datetime,
+DBName NVarchar(max),
+User_level_Permissions NVARCHAR(MAX)
+) 
+END
+
+IF  NOT EXISTS (SELECT * FROM sys.objects 
+WHERE object_id = OBJECT_ID(N'DBA.dbo.tbl_DBA_role_level_permissions') AND type in (N'U'))
+
+BEGIN
+CREATE TABLE DBA.dbo.tbl_DBA_role_level_permissions(
+DATE Datetime,
+DBName NVarchar(max),
+role_level_Permissions NVARCHAR(MAX)
+) 
+END
+
+IF  NOT EXISTS (SELECT * FROM sys.objects 
+WHERE object_id = OBJECT_ID(N'DBA.dbo.tbl_DBA_Users_per_db') AND type in (N'U'))
+
+BEGIN
+CREATE TABLE DBA.dbo.tbl_DBA_Users_per_db(
+DATE Datetime,
+DBName NVarchar(max),
+User_per_db NVARCHAR(MAX)
+) 
+END
+
+IF  NOT EXISTS (SELECT * FROM sys.objects 
+WHERE object_id = OBJECT_ID(N'DBA.dbo.tbl_DBA_Object_level_permissions') AND type in (N'U'))
+
+BEGIN
+CREATE TABLE DBA.dbo.tbl_DBA_Object_level_permissions(
+DATE Datetime,
+DBName NVarchar(max),
+Object_level_permission NVARCHAR(MAX)
+) 
+END
+
+
+
+PRINT '--Scripting out the User Permissions to Be Granted'
+
+DECLARE @command NVARCHAR(MAX) 
+SELECT @command =
+
+
+ 
+'USE [?] 
+
+DECLARE @dbname VARCHAR(250) 
+SELECT @dbname = DB_NAME() 
+
+PRINT ''use '' + @dbname
+
+insert into DBA.dbo.tbl_DBA_Users_per_db
+SELECT GETDATE() AS DATE,
+DB_NAME(),
+''CREATE USER '' + ''['' + NAME + '']'' + '' FOR LOGIN '' + ''['' + NAME + '']''
+FROM sys.database_principals
+WHERE	[NAME] NOT IN (''dbo'',''guest'',''sys'',''INFORMATION_SCHEMA'')
+
+
+PRINT ''use '' + @dbname
+
+insert into  DBA.dbo.tbl_DBA_role_level_permissions
+SELECT GETDATE() AS DATE,  
+DB_NAME(),
+''EXEC sp_AddRoleMember '' + ''['' + DBRole.NAME + '']'' + '','' + ''['' + DBP.NAME + '']''
+FROM sys.database_principals DBP
+INNER JOIN sys.database_role_members DBM ON DBM.member_principal_id = DBP.principal_id
+INNER JOIN sys.database_principals DBRole ON DBRole.principal_id = DBM.role_principal_id
+WHERE DBP.NAME <> ''dbo''
+
+
+PRINT ''use '' + @dbname
+ 
+insert into  DBA.dbo.tbl_DBA_User_level_permissions
+SELECT  	GETDATE() AS DATE,
+		DB_NAME(),
+		CASE WHEN DBP.state <> ''W'' THEN DBP.state_desc ELSE ''GRANT'' END
+		+ SPACE(1) + DBP.permission_name + SPACE(1)
+		+ SPACE(1) + ''TO'' + SPACE(1) + QUOTENAME(USR.name) COLLATE database_default
+		+ CASE WHEN DBP.state <> ''W'' THEN SPACE(0) ELSE SPACE(1) + ''WITH GRANT OPTION'' END + '';'' 
+FROM	sys.database_permissions AS DBP
+		INNER JOIN	sys.database_principals AS USR	ON DBP.grantee_principal_id = USR.principal_id
+WHERE	DBP.major_id = 0 and USR.name <> ''dbo''
+ORDER BY DBP.permission_name ASC, DBP.state_desc ASC
+'
+
+ EXEC sp_MSforeachdb @command
+
+
+ PRINT '--Scripting out the object Permissions to Be Granted (In its own quey due to syntax errors'
+
+DECLARE @command1 NVARCHAR(MAX) 
+SELECT @command1 =
+
+
+
+ 'USE [?] 
+
+DECLARE @dbname VARCHAR(250) 
+SELECT @dbname = DB_NAME() 
+
+insert into  DBA.dbo.tbl_DBA_object_level_permissions 
+ SELECT  
+ GETDATE() AS DATE,
+		DB_NAME(),  
+		CASE 
+            WHEN sys.database_permissions.state <> ''W'' THEN sys.database_permissions.state_desc 
+            ELSE ''GRANT''
+        END
+        + SPACE(1) + sys.database_permissions.permission_name + SPACE(1) + ''ON '' + QUOTENAME(SCHEMA_NAME(objects.schema_id)) + ''.'' + QUOTENAME(objects.name) --select, execute, etc on specific objects
+        + CASE
+                WHEN sys.columns.column_id IS NULL THEN SPACE(0)
+                ELSE ''('' + QUOTENAME(sys.columns.name) + '')''
+          END
+        + SPACE(1) + ''TO'' + SPACE(1) + QUOTENAME(USER_NAME(sys.database_principals.principal_id)) COLLATE database_default
+        + CASE 
+                WHEN sys.database_permissions.state <> ''W'' THEN SPACE(0)
+                ELSE SPACE(1) + ''WITH GRANT OPTION''
+          END
+FROM    
+    sys.database_permissions
+        INNER JOIN
+    sys.objects 
+            ON sys.database_permissions.major_id = objects.[object_id]
+        INNER JOIN
+    sys.database_principals
+            ON sys.database_permissions.grantee_principal_id = sys.database_principals.principal_id
+        LEFT JOIN
+    sys.columns
+            ON sys.columns.column_id = sys.database_permissions.minor_id AND sys.columns.[object_id] = sys.database_permissions.major_id'
+ 
+  EXEC sp_MSforeachdb @command1
+SET NOCOUNT OFF;
 GO
 
 
