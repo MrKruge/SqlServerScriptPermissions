@@ -48,6 +48,11 @@ BEGIN
     DROP PROCEDURE sp_DBA_Script_All_Permissions;
 END
 
+IF OBJECT_ID(N'sp_DBA_Read_Permissions', N'P') IS NOT NULL
+BEGIN
+    DROP PROCEDURE sp_DBA_Read_Permissions;
+END
+
 USE MSDB
 /****** Object:  Job [DBA - ScriptOutPermissions]    Script Date: 2/17/2025 21:02:10 ******/
 BEGIN TRANSACTION
@@ -86,6 +91,9 @@ EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'ScriptOu
 		@os_run_priority=0, @subsystem=N'TSQL', 
 		@command=N'exec [sp_DBA_Get_All_Permissions]', 
 		@database_name=N'DBA', 
+		-- !! CHANGE THIS PATH to match your environment before deploying !!
+		-- Example (Windows): N'C:\SQLBackup\All_SQL_Permissions.sql'
+		-- Example (Linux):   N'/var/opt/mssql/data/All_SQL_Permissions.sql'
 		@output_file_name=N'E:\SQLDATA\BACKUP\All_SQL_Permissions.sql', 
 		@flags=0
 IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
@@ -132,7 +140,8 @@ GO
 CREATE TABLE [dbo].[tbl_DBA_Object_level_permissions](
 	[DATE] [datetime] NULL,
 	[DBName] [nvarchar](max) NULL,
-	[Object_level_permission] [nvarchar](max) NULL
+	[Object_level_permission] [nvarchar](max) NULL,
+	[ReadablePermission] [nvarchar](max) NULL
 ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
 GO
 
@@ -149,7 +158,8 @@ GO
 CREATE TABLE [dbo].[tbl_DBA_role_level_permissions](
 	[DATE] [datetime] NULL,
 	[DBName] [nvarchar](max) NULL,
-	[role_level_Permissions] [nvarchar](max) NULL
+	[role_level_Permissions] [nvarchar](max) NULL,
+	[ReadablePermission] [nvarchar](max) NULL
 ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
 GO
 
@@ -165,7 +175,8 @@ GO
 
 CREATE TABLE [dbo].[tbl_DBA_Server_level_permissions](
 	[DATE] [datetime] NULL,
-	[Server_level_Permissions] [nvarchar](max) NULL
+	[Server_level_Permissions] [nvarchar](max) NULL,
+	[ReadablePermission] [nvarchar](max) NULL
 ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
 GO
 
@@ -181,7 +192,8 @@ GO
 
 CREATE TABLE [dbo].[tbl_DBA_server_roles](
 	[DATE] [datetime] NULL,
-	[server_roles] [nvarchar](max) NULL
+	[server_roles] [nvarchar](max) NULL,
+	[ReadablePermission] [nvarchar](max) NULL
 ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
 GO
 USE [DBA]
@@ -197,7 +209,8 @@ GO
 CREATE TABLE [dbo].[tbl_DBA_User_level_permissions](
 	[DATE] [datetime] NULL,
 	[DBName] [nvarchar](max) NULL,
-	[User_level_Permissions] [nvarchar](max) NULL
+	[User_level_Permissions] [nvarchar](max) NULL,
+	[ReadablePermission] [nvarchar](max) NULL
 ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
 GO
 
@@ -214,7 +227,8 @@ GO
 CREATE TABLE [dbo].[tbl_DBA_Users_per_db](
 	[DATE] [datetime] NULL,
 	[DBName] [nvarchar](max) NULL,
-	[User_per_db] [nvarchar](max) NULL
+	[User_per_db] [nvarchar](max) NULL,
+	[ReadablePermission] [nvarchar](max) NULL
 ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
 GO
 
@@ -230,7 +244,8 @@ GO
 
 CREATE TABLE [dbo].[tbl_DBA_logins](
 	[DATE] [datetime] NULL,
-	[Logins_to_be_created] [nvarchar](max) NULL
+	[Logins_to_be_created] [nvarchar](max) NULL,
+	[ReadablePermission] [nvarchar](max) NULL
 ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
 GO
 
@@ -375,18 +390,21 @@ WHERE object_id = OBJECT_ID(N'DBA.dbo.tbl_DBA_logins') AND type in (N'U'))
 BEGIN
 CREATE TABLE DBA.dbo.tbl_DBA_logins(
 DATE Datetime,
-Logins_to_be_created NVARCHAR(MAX)
+Logins_to_be_created NVARCHAR(MAX),
+ReadablePermission NVARCHAR(MAX)
 ) 
 END
 
 INSERT INTO  DBA.dbo.tbl_DBA_logins
-SELECT GETDATE() AS DATE,'IF (SUSER_ID('+QUOTENAME(SP.name,'''')+') IS NULL) BEGIN CREATE LOGIN ' +QUOTENAME(SP.name)+
+SELECT GETDATE() AS DATE,
+       'IF (SUSER_ID('+QUOTENAME(SP.name,'''')+') IS NULL) BEGIN CREATE LOGIN ' +QUOTENAME(SP.name)+
 			   CASE 
 					WHEN SP.type_desc = 'SQL_LOGIN' THEN ' WITH PASSWORD = ' +CONVERT(NVARCHAR(MAX),SL.password_hash,1)+ ' HASHED, CHECK_EXPIRATION = ' 
 						+ CASE WHEN SL.is_expiration_checked = 1 THEN 'ON' ELSE 'OFF' END +', CHECK_POLICY = ' +CASE WHEN SL.is_policy_checked = 1 THEN 'ON,' ELSE 'OFF,' END
 					ELSE ' FROM WINDOWS WITH'
 				END 
-	   +' DEFAULT_DATABASE=[' +SP.default_database_name+ '], DEFAULT_LANGUAGE=[' +SP.default_language_name+ '] END;' COLLATE SQL_Latin1_General_CP1_CI_AS AS [-- Logins To Be Created --]
+	   +' DEFAULT_DATABASE=[' +SP.default_database_name+ '], DEFAULT_LANGUAGE=[' +SP.default_language_name+ '] END;' COLLATE SQL_Latin1_General_CP1_CI_AS AS [-- Logins To Be Created --],
+       'LOGIN: ' + SP.name + ' | TYPE: ' + SP.type_desc + ' | DEFAULT_DB: ' + SP.default_database_name
 FROM sys.server_principals AS SP LEFT JOIN sys.sql_logins AS SL
 		ON SP.principal_id = SL.principal_id
 WHERE SP.type IN ('S','G','U')
@@ -402,7 +420,8 @@ WHERE object_id = OBJECT_ID(N'DBA.dbo.tbl_DBA_Server_roles') AND type in (N'U'))
 BEGIN
 CREATE TABLE DBA.dbo.tbl_DBA_server_roles(
 DATE Datetime,
-server_roles Nvarchar(max)
+server_roles Nvarchar(max),
+ReadablePermission NVARCHAR(MAX)
 )
 END
 
@@ -410,8 +429,9 @@ END
 -- Scripting Out the Role Membership to Be Added
 INSERT INTO DBA.dbo.tbl_DBA_server_roles
 SELECT GETDATE() AS DATE,
-'EXEC master..sp_addsrvrolemember @loginame = N''' + SL.name + ''', @rolename = N''' + SR.name + '''
-' AS [-- Server Roles the Logins Need to be Added --]
+       'EXEC master..sp_addsrvrolemember @loginame = N''' + SL.name + ''', @rolename = N''' + SR.name + '''
+' AS [-- Server Roles the Logins Need to be Added --],
+       'LOGIN: ' + SL.name + ' | SERVER_ROLE: ' + SR.name
 FROM master.sys.server_role_members SRM
 	JOIN master.sys.server_principals SR ON SR.principal_id = SRM.role_principal_id
 	JOIN master.sys.server_principals SL ON SL.principal_id = SRM.member_principal_id
@@ -429,7 +449,8 @@ WHERE object_id = OBJECT_ID(N'DBA.dbo.tbl_DBA_Server_level_permissions') AND typ
 BEGIN
 CREATE TABLE DBA.dbo.tbl_DBA_Server_level_permissions(
 DATE Datetime,
-Server_level_Permissions NVARCHAR(MAX)
+Server_level_Permissions NVARCHAR(MAX),
+ReadablePermission NVARCHAR(MAX)
 ) 
 END
 
@@ -443,7 +464,8 @@ SELECT GETDATE() AS DATE,
 	CASE WHEN SrvPerm.state_desc <> 'GRANT_WITH_GRANT_OPTION' 
 		THEN '' 
 		ELSE ' WITH GRANT OPTION' 
-	END collate database_default AS [-- Server Level Permissions to Be Granted --] 
+	END collate database_default AS [-- Server Level Permissions to Be Granted --],
+	'LOGIN: ' + SP.name + ' | STATE: ' + CASE WHEN SrvPerm.state_desc <> 'GRANT_WITH_GRANT_OPTION' THEN SrvPerm.state_desc ELSE 'GRANT' END + ' | PERMISSION: ' + SrvPerm.permission_name
 FROM sys.server_permissions AS SrvPerm 
 	JOIN sys.server_principals AS SP ON SrvPerm.grantee_principal_id = SP.principal_id 
 WHERE   SP.type IN ( 'S', 'U', 'G' ) 
@@ -464,7 +486,8 @@ BEGIN
 CREATE TABLE DBA.dbo.tbl_DBA_User_level_permissions(
 DATE Datetime,
 DBName NVarchar(max),
-User_level_Permissions NVARCHAR(MAX)
+User_level_Permissions NVARCHAR(MAX),
+ReadablePermission NVARCHAR(MAX)
 ) 
 END
 
@@ -475,7 +498,8 @@ BEGIN
 CREATE TABLE DBA.dbo.tbl_DBA_role_level_permissions(
 DATE Datetime,
 DBName NVarchar(max),
-role_level_Permissions NVARCHAR(MAX)
+role_level_Permissions NVARCHAR(MAX),
+ReadablePermission NVARCHAR(MAX)
 ) 
 END
 
@@ -486,7 +510,8 @@ BEGIN
 CREATE TABLE DBA.dbo.tbl_DBA_Users_per_db(
 DATE Datetime,
 DBName NVarchar(max),
-User_per_db NVARCHAR(MAX)
+User_per_db NVARCHAR(MAX),
+ReadablePermission NVARCHAR(MAX)
 ) 
 END
 
@@ -497,7 +522,8 @@ BEGIN
 CREATE TABLE DBA.dbo.tbl_DBA_Object_level_permissions(
 DATE Datetime,
 DBName NVarchar(max),
-Object_level_permission NVARCHAR(MAX)
+Object_level_permission NVARCHAR(MAX),
+ReadablePermission NVARCHAR(MAX)
 ) 
 END
 
@@ -520,7 +546,8 @@ PRINT ''use '' + @dbname
 insert into DBA.dbo.tbl_DBA_Users_per_db
 SELECT GETDATE() AS DATE,
 DB_NAME(),
-''CREATE USER '' + ''['' + NAME + '']'' + '' FOR LOGIN '' + ''['' + NAME + '']''
+''CREATE USER '' + ''['' + NAME + '']'' + '' FOR LOGIN '' + ''['' + NAME + '']'',
+''USER: '' + NAME
 FROM sys.database_principals
 WHERE	[NAME] NOT IN (''dbo'',''guest'',''sys'',''INFORMATION_SCHEMA'')
 
@@ -530,7 +557,8 @@ PRINT ''use '' + @dbname
 insert into  DBA.dbo.tbl_DBA_role_level_permissions
 SELECT GETDATE() AS DATE,  
 DB_NAME(),
-''EXEC sp_AddRoleMember '' + ''['' + DBRole.NAME + '']'' + '','' + ''['' + DBP.NAME + '']''
+''EXEC sp_AddRoleMember '' + ''['' + DBRole.NAME + '']'' + '','' + ''['' + DBP.NAME + '']'',
+''USER: '' + DBP.NAME + '' | DB_ROLE: '' + DBRole.NAME
 FROM sys.database_principals DBP
 INNER JOIN sys.database_role_members DBM ON DBM.member_principal_id = DBP.principal_id
 INNER JOIN sys.database_principals DBRole ON DBRole.principal_id = DBM.role_principal_id
@@ -545,7 +573,8 @@ SELECT  	GETDATE() AS DATE,
 		CASE WHEN DBP.state <> ''W'' THEN DBP.state_desc ELSE ''GRANT'' END
 		+ SPACE(1) + DBP.permission_name + SPACE(1)
 		+ SPACE(1) + ''TO'' + SPACE(1) + QUOTENAME(USR.name) COLLATE database_default
-		+ CASE WHEN DBP.state <> ''W'' THEN SPACE(0) ELSE SPACE(1) + ''WITH GRANT OPTION'' END + '';'' 
+		+ CASE WHEN DBP.state <> ''W'' THEN SPACE(0) ELSE SPACE(1) + ''WITH GRANT OPTION'' END + '';'',
+		''USER: '' + USR.name + '' | STATE: '' + CASE WHEN DBP.state <> ''W'' THEN DBP.state_desc ELSE ''GRANT'' END + '' | PERMISSION: '' + DBP.permission_name
 FROM	sys.database_permissions AS DBP
 		INNER JOIN	sys.database_principals AS USR	ON DBP.grantee_principal_id = USR.principal_id
 WHERE	DBP.major_id = 0 and USR.name <> ''dbo''
@@ -584,7 +613,8 @@ insert into  DBA.dbo.tbl_DBA_object_level_permissions
         + CASE 
                 WHEN sys.database_permissions.state <> ''W'' THEN SPACE(0)
                 ELSE SPACE(1) + ''WITH GRANT OPTION''
-          END
+          END,
+        ''USER: '' + USER_NAME(sys.database_permissions.grantee_principal_id) + '' | STATE: '' + CASE WHEN sys.database_permissions.state <> ''W'' THEN sys.database_permissions.state_desc ELSE ''GRANT'' END + '' | PERMISSION: '' + sys.database_permissions.permission_name + '' | ON: '' + SCHEMA_NAME(objects.schema_id) + ''.'' + objects.name
 FROM    
     sys.database_permissions
         INNER JOIN
@@ -598,7 +628,166 @@ FROM
             ON sys.columns.column_id = sys.database_permissions.minor_id AND sys.columns.[object_id] = sys.database_permissions.major_id'
  
   EXEC sp_MSforeachdb @command1
+
+ PRINT '--Scripting out schema-level Permissions (class = 3)'
+
+DECLARE @command2 NVARCHAR(MAX)
+SELECT @command2 =
+
+ 'USE [?]
+
+DECLARE @dbname VARCHAR(250)
+SELECT @dbname = DB_NAME()
+
+insert into  DBA.dbo.tbl_DBA_object_level_permissions
+SELECT
+    GETDATE() AS DATE,
+    DB_NAME(),
+    CASE
+        WHEN p.state <> ''W'' THEN p.state_desc
+        ELSE ''GRANT''
+    END
+    + SPACE(1) + p.permission_name + '' ON SCHEMA::'' + QUOTENAME(s.name)
+    + SPACE(1) + ''TO'' + SPACE(1) + QUOTENAME(u.name) COLLATE database_default
+    + CASE
+        WHEN p.state <> ''W'' THEN SPACE(0)
+        ELSE SPACE(1) + ''WITH GRANT OPTION''
+    END,
+    ''USER: '' + u.name + '' | STATE: '' + CASE WHEN p.state <> ''W'' THEN p.state_desc ELSE ''GRANT'' END
+    + '' | PERMISSION: '' + p.permission_name + '' | ON: SCHEMA::'' + s.name
+FROM sys.database_permissions p
+INNER JOIN sys.schemas s ON s.schema_id = p.major_id
+INNER JOIN sys.database_principals u ON u.principal_id = p.grantee_principal_id
+WHERE p.class = 3'
+
+  EXEC sp_MSforeachdb @command2
 SET NOCOUNT OFF;
+GO
+
+
+-- ============================================================
+-- New Read Procedure: sp_DBA_Read_Permissions
+-- ============================================================
+-- This replaces and extends sp_DBA_Script_All_Permissions.
+-- It adds filtering by LoginName and PermissionLevel on top
+-- of the existing @returndays and @Dbname parameters.
+-- ============================================================
+
+USE [DBA]
+GO
+
+IF OBJECT_ID(N'[dbo].[sp_DBA_Read_Permissions]', N'P') IS NOT NULL
+BEGIN
+    DROP PROCEDURE [dbo].[sp_DBA_Read_Permissions]
+END
+GO
+
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+-- =============================================
+-- Author:		Danny Kruge
+-- Create date: 13/05/2025
+-- Description:	Read stored permissions with flexible filtering.
+--              @returndays      : NULL = All Time | -1 = Last Day | -7 = Last Week (must be negative or NULL)
+--              @Dbname          : NULL = All Databases | 'master' = Specific DB (no effect on server-level)
+--              @LoginName       : NULL = All Logins/Users | 'mylogin' = Filter all levels for that login or user
+--              @PermissionLevel : ALL | LOGINS | SERVER | DATABASE | OBJECT
+-- =============================================
+CREATE PROCEDURE [dbo].[sp_DBA_Read_Permissions]
+@returndays		 int			= NULL,
+@Dbname			 nvarchar(max)	= NULL,
+@LoginName		 nvarchar(256)	= NULL,
+@PermissionLevel nvarchar(50)	= 'ALL'
+AS
+
+IF @returndays > 0
+BEGIN
+	raiserror('Whoops! you tried to go in the future. please enter a minus number for example -1 then you shall be granted your wish. DOEI', 18, 1)
+    return -1
+END
+
+IF @PermissionLevel NOT IN ('ALL', 'LOGINS', 'SERVER', 'DATABASE', 'OBJECT')
+BEGIN
+	raiserror('Invalid @PermissionLevel. Valid options are: ALL, LOGINS, SERVER, DATABASE, OBJECT', 18, 1)
+	return -1
+END
+
+-- NULL means all time, so fall back to a baseline date that covers everything
+DECLARE @daysminus datetime = CASE WHEN @returndays IS NULL THEN '19000101' ELSE DATEADD(day, @returndays, GETDATE()) END
+
+
+-- Logins: readable summary only
+IF @PermissionLevel IN ('ALL', 'LOGINS')
+BEGIN
+	SELECT [DATE]
+		  ,[ReadablePermission] AS [Login]
+	FROM [DBA].[dbo].[tbl_DBA_logins]
+	WHERE [DATE] > @daysminus
+	AND (@LoginName IS NULL OR [ReadablePermission] LIKE '%' + @LoginName + '%')
+END
+
+
+-- Server roles and server-level grants: readable summary only
+IF @PermissionLevel IN ('ALL', 'SERVER')
+BEGIN
+	SELECT [DATE]
+		  ,[ReadablePermission] AS [ServerRole]
+	FROM [DBA].[dbo].[tbl_DBA_server_roles]
+	WHERE [DATE] > @daysminus
+	AND (@LoginName IS NULL OR [ReadablePermission] LIKE '%' + @LoginName + '%')
+
+	SELECT [DATE]
+		  ,[ReadablePermission] AS [ServerPermission]
+	FROM [DBA].[dbo].[tbl_DBA_Server_level_permissions]
+	WHERE [DATE] > @daysminus
+	AND (@LoginName IS NULL OR [ReadablePermission] LIKE '%' + @LoginName + '%')
+END
+
+
+-- Database-level: role memberships, users, user grants — readable summary only
+IF @PermissionLevel IN ('ALL', 'DATABASE')
+BEGIN
+	SELECT [DATE]
+		  ,[DBName]
+		  ,[ReadablePermission] AS [DatabaseRole]
+	FROM [DBA].[dbo].[tbl_DBA_role_level_permissions]
+	WHERE [DATE] > @daysminus
+	AND (@Dbname IS NULL OR DBName = @Dbname)
+	AND (@LoginName IS NULL OR [ReadablePermission] LIKE '%' + @LoginName + '%')
+
+	SELECT [DATE]
+		  ,[DBName]
+		  ,[ReadablePermission] AS [DatabaseUser]
+	FROM [DBA].[dbo].[tbl_DBA_Users_per_db]
+	WHERE [DATE] > @daysminus
+	AND (@Dbname IS NULL OR DBName = @Dbname)
+	AND (@LoginName IS NULL OR [ReadablePermission] LIKE '%' + @LoginName + '%')
+
+	SELECT [DATE]
+		  ,[DBName]
+		  ,[ReadablePermission] AS [DatabasePermission]
+	FROM [DBA].[dbo].[tbl_DBA_User_level_permissions]
+	WHERE [DATE] > @daysminus
+	AND (@Dbname IS NULL OR DBName = @Dbname)
+	AND (@LoginName IS NULL OR [ReadablePermission] LIKE '%' + @LoginName + '%')
+END
+
+
+-- Object-level grants: readable summary only
+IF @PermissionLevel IN ('ALL', 'OBJECT')
+BEGIN
+	SELECT [DATE]
+		  ,[DBName]
+		  ,[ReadablePermission] AS [ObjectPermission]
+	FROM [DBA].[dbo].[tbl_DBA_Object_level_permissions]
+	WHERE [DATE] > @daysminus
+	AND (@Dbname IS NULL OR DBName = @Dbname)
+	AND (@LoginName IS NULL OR [ReadablePermission] LIKE '%' + @LoginName + '%')
+END
 GO
 
 
